@@ -44,6 +44,13 @@ struct AttachmentTests {
     #expect(attachment.description.contains("'MyAttachable'"))
   }
 
+  @Test func metadata() throws {
+    let metadataValue = Int.random(in: 0 ..< .max)
+    let attachableValue = MyAttachable(string: "<!doctype html>", expectedMetadata: metadataValue)
+    let attachment = Attachment(attachableValue, named: "AttachmentTests.saveValue.html", metadata: metadataValue)
+    #expect(attachment.metadata == metadataValue)
+  }
+
 #if !SWT_NO_FILE_IO
   func compare(_ attachableValue: borrowing MySendableAttachable, toContentsOfFileAtPath filePath: String) throws {
     let file = try FileHandle(forReadingAtPath: filePath)
@@ -424,6 +431,53 @@ struct AttachmentTests {
       try attachment.attachableValue.withUnsafeBufferPointer(for: attachment) { _ in }
     }
   }
+
+  @Test("Attach Codable-conformant type with metadata")
+  func codableWithMetadata() async throws {
+    let attachableValue = MyCodableAttachable(string: "abc123")
+    let attachment = Attachment(
+      attachableValue,
+      metadata: .init(
+        format: .propertyListFormat(.xml)
+      )
+    )
+    try attachment.withUnsafeBufferPointer { bytes in
+      var format = PropertyListSerialization.PropertyListFormat.binary
+      let object = try PropertyListSerialization.propertyList(from: Data(bytes), format: &format)
+      #expect(format == .xml)
+      let dict = try #require(object as? [String: Any])
+      let string = try #require(dict["string"] as? String)
+      #expect(string == "abc123")
+    }
+  }
+
+  @Test("Attach NSSecureCoding-conformant type with metadata")
+  func secureCodingWithMetadata() async throws {
+    let attachableValue = MySecureCodingAttachable(string: "abc123")
+    let attachment = Attachment(
+      attachableValue,
+      metadata: .init(
+        format: .propertyListFormat(.xml)
+      )
+    )
+    try attachment.withUnsafeBufferPointer { bytes in
+      var format = PropertyListSerialization.PropertyListFormat.binary
+      _ = try PropertyListSerialization.propertyList(from: Data(bytes), format: &format)
+      #expect(format == .xml)
+
+      let object = try #require(try NSKeyedUnarchiver.unarchivedObject(ofClass: MySecureCodingAttachable.self, from: Data(bytes)))
+      #expect(object.string == "abc123")
+    }
+
+    #expect(throws: CocoaError.self) {
+      let attachableValue = MySecureCodingAttachable(string: "abc123")
+      let attachment = Attachment(
+        attachableValue,
+        metadata: .init(format: .json)
+      )
+      try attachment.withUnsafeBufferPointer { _ in }
+    }
+  }
 #endif
 }
 
@@ -557,10 +611,16 @@ extension AttachmentTests {
 // MARK: - Fixtures
 
 struct MyAttachable: Attachable, ~Copyable {
+  typealias AttachmentMetadata = Int
+
   var string: String
   var errorToThrow: (any Error)?
+  var expectedMetadata: Int?
 
   func withUnsafeBufferPointer<R>(for attachment: borrowing Attachment<Self>, _ body: (UnsafeRawBufferPointer) throws -> R) throws -> R {
+    if let expectedMetadata {
+      #expect(expectedMetadata == attachment.metadata)
+    }
     if let errorToThrow {
       throw errorToThrow
     }
