@@ -49,6 +49,8 @@ struct AttachmentTests {
     let attachableValue = MyAttachable(string: "<!doctype html>", expectedMetadata: metadataValue)
     let attachment = Attachment(attachableValue, named: "AttachmentTests.saveValue.html", metadata: metadataValue)
     #expect(attachment.metadata == metadataValue)
+
+    #expect(String.AttachmentMetadata.self == Never?.self)
   }
 
 #if !SWT_NO_FILE_IO
@@ -484,7 +486,7 @@ struct AttachmentTests {
 extension AttachmentTests {
   @Suite("Built-in conformances")
   struct BuiltInConformances {
-    func test(_ value: some Attachable) throws {
+    func test<A>(_ value: A) throws where A: Attachable, A.AttachmentMetadata == Never? {
       #expect(value.estimatedAttachmentByteCount == 6)
       let attachment = Attachment(value)
       try attachment.withUnsafeBufferPointer { buffer in
@@ -587,23 +589,24 @@ extension AttachmentTests {
     }
 
     @available(_uttypesAPI, *)
-    @Test(arguments: [Float(0.0).nextUp, 0.25, 0.5, 0.75, 1.0], [.png as UTType?, .jpeg, .gif, .image, .data, nil])
-    func attachCGImage(quality: Float, type: UTType?) throws {
+    @Test(arguments: [Float(0.0).nextUp, 0.25, 0.5, 0.75, 1.0], [UTType.png, .jpeg, .gif, .image, .data])
+    func attachCGImage(quality: Float, type: UTType) throws {
       let image = try Self.cgImage.get()
-      let attachment = Attachment(image, named: "diamond", as: type, encodingQuality: quality)
+      let attachment = Attachment(image, named: "diamond", metadata: .init(encodingQuality: quality, contentType: type))
       #expect(attachment.attachableValue === image)
       try attachment.attachableValue.withUnsafeBufferPointer(for: attachment) { buffer in
         #expect(buffer.count > 32)
       }
     }
 
+#if !SWT_NO_EXIT_TESTS
     @available(_uttypesAPI, *)
     @Test func cannotAttachCGImageWithNonImageType() async {
-      #expect(throws: ImageAttachmentError.contentTypeDoesNotConformToImage) {
-        let attachment = Attachment(try Self.cgImage.get(), named: "diamond", as: .mp3)
-        try attachment.attachableValue.withUnsafeBufferPointer(for: attachment) { _ in }
+      #expect(exitsWith: .failure) {
+        _ = Attachment(try Self.cgImage.get(), named: "diamond", metadata: .init(contentType: .mp3))
       }
     }
+#endif
 #endif
   }
 }
@@ -611,7 +614,7 @@ extension AttachmentTests {
 // MARK: - Fixtures
 
 struct MyAttachable: Attachable, ~Copyable {
-  typealias AttachmentMetadata = Int
+  typealias AttachmentMetadata = Int?
 
   var string: String
   var errorToThrow: (any Error)?

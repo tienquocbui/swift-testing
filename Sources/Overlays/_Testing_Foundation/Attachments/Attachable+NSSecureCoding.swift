@@ -17,8 +17,11 @@ public import Foundation
 // NSKeyedArchiver for encoding.
 @_spi(Experimental)
 extension Attachable where Self: NSSecureCoding {
-  public typealias AttachmentMetadata = EncodableAttachmentMetadata
+  public typealias AttachmentMetadata = EncodableAttachmentMetadata?
+}
 
+@_spi(Experimental)
+extension Attachable where Self: NSSecureCoding, AttachmentMetadata == EncodableAttachmentMetadata? {
   /// Encode this object using [`NSKeyedArchiver`](https://developer.apple.com/documentation/foundation/nskeyedarchiver)
   /// into a buffer, then call a function and pass that buffer to it.
   ///
