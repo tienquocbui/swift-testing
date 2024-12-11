@@ -50,17 +50,35 @@ public struct ImageAttachmentMetadata: Sendable {
       }
     }
     set {
+      lazy var newValueDescription = newValue.localizedDescription ?? newValue.identifier
       precondition(
         newValue.conforms(to: .image),
-        "An image cannot be attached as an instance of type '\(newValue.identifier)'. Use a type that conforms to 'public.image'."
+        "An image cannot be attached as an instance of type '\(newValueDescription)'. Use a type that conforms to 'public.image' instead."
       )
       _contentType = newValue
     }
   }
 
+  /// The content type to use when encoding the image, substituting a concrete
+  /// type for `UTType.image`.
+  @available(_uttypesAPI, *)
+  var computedContentType: UTType {
+    if let contentType = _contentType as? UTType, contentType != .image {
+      return contentType
+    } else if encodingQuality < 1.0 {
+      return .jpeg
+    } else {
+      return .png
+    }
+  }
+
+  /// The type identifier (as a `CFString`) corresponding to this instance's
+  /// ``contentType`` property.
+  ///
+  /// The value of this property is used by ImageIO when serializing an image.
   public var typeIdentifier: CFString {
     if #available(_uttypesAPI, *) {
-      contentType.identifier as CFString
+      computedContentType.identifier as CFString
     } else if encodingQuality < 1.0 {
       kUTTypeJPEG
     } else {

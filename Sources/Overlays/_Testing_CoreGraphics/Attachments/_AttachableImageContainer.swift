@@ -13,7 +13,11 @@
 private import CoreGraphics
 
 private import ImageIO
-import UniformTypeIdentifiers
+private import UniformTypeIdentifiers
+
+#if canImport(CoreServices_Private)
+private import CoreServices_Private
+#endif
 
 /// ## Why can't images directly conform to Attachable?
 ///
@@ -75,7 +79,8 @@ extension _AttachableImageContainer: AttachableContainer {
     let attachableCGImage = try image.attachableCGImage
 
     // Create the image destination.
-    guard let dest = CGImageDestinationCreateWithData(data as CFMutableData, attachment.metadata.typeIdentifier, 1, nil) else {
+    let typeIdentifier = attachment.metadata.typeIdentifier
+    guard let dest = CGImageDestinationCreateWithData(data as CFMutableData, typeIdentifier, 1, nil) else {
       throw ImageAttachmentError.couldNotCreateImageDestination
     }
 
@@ -101,6 +106,24 @@ extension _AttachableImageContainer: AttachableContainer {
     return try withExtendedLifetime(data) {
       try body(UnsafeRawBufferPointer(start: data.bytes, count: data.length))
     }
+  }
+
+  public borrowing func makePreferredName(from suggestedName: String, for attachment: borrowing Attachment<Self>) -> String {
+    let preferredName = attachment.preferredName
+
+    if #available(_uttypesAPI, *) {
+      let metadata = attachment.metadata
+      let contentType = metadata.contentType
+      if contentType != .image {
+        return (preferredName as NSString).appendingPathExtension(for: metadata.contentType)
+      } else if metadata.encodingQuality < 1.0 {
+        return (preferredName as NSString).appendingPathExtension(for: .jpeg)
+      } else {
+        return (preferredName as NSString).appendingPathExtension(for: .png)
+      }
+    }
+
+    return preferredName
   }
 }
 #endif

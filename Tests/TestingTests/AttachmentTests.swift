@@ -589,7 +589,7 @@ extension AttachmentTests {
     }
 
     @available(_uttypesAPI, *)
-    @Test(arguments: [Float(0.0).nextUp, 0.25, 0.5, 0.75, 1.0], [UTType.png, .jpeg, .gif, .image, .data])
+    @Test(arguments: [Float(0.0).nextUp, 0.25, 0.5, 0.75, 1.0], [UTType.png, .jpeg, .gif, .image])
     func attachCGImage(quality: Float, type: UTType) throws {
       let image = try Self.cgImage.get()
       let attachment = Attachment(image, named: "diamond", metadata: .init(encodingQuality: quality, contentType: type))
@@ -602,7 +602,7 @@ extension AttachmentTests {
 #if !SWT_NO_EXIT_TESTS
     @available(_uttypesAPI, *)
     @Test func cannotAttachCGImageWithNonImageType() async {
-      #expect(exitsWith: .failure) {
+      await #expect(exitsWith: .failure) {
         _ = Attachment(try Self.cgImage.get(), named: "diamond", metadata: .init(contentType: .mp3))
       }
     }

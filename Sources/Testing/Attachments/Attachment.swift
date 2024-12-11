@@ -27,7 +27,7 @@ public struct Attachment<AttachableValue>: ~Copyable where AttachableValue: Atta
   ///
   /// The type of this property depends on the type of the attachment's
   /// ``attachableValue-7dyjv`` property.
-  public var metadata: AttachableValue.AttachmentMetadata
+  public internal(set) var metadata: AttachableValue.AttachmentMetadata
 
   /// The path to which the this attachment was written, if any.
   ///
@@ -42,6 +42,9 @@ public struct Attachment<AttachableValue>: ~Copyable where AttachableValue: Atta
   @_spi(ForToolsIntegrationOnly)
   public var fileSystemPath: String?
 
+  /// The preferred name provided when this instance was created.
+  fileprivate var _preferredName: String?
+
   /// The default preferred name to use if the developer does not supply one.
   @_spi(ForSwiftTestingOnly)
   public static var defaultPreferredName: String {
@@ -55,7 +58,9 @@ public struct Attachment<AttachableValue>: ~Copyable where AttachableValue: Atta
   /// testing library may substitute a different filename as needed. If the
   /// value of this property has not been explicitly set, the testing library
   /// will attempt to generate its own value.
-  public var preferredName: String
+  public var preferredName: String {
+    attachableValue.makePreferredName(from: _preferredName ?? Self.defaultPreferredName, for: self)
+  }
 
   /// The source location of this instance.
   ///
@@ -94,7 +99,7 @@ extension Attachment where AttachableValue: ~Copyable {
     sourceLocation: SourceLocation = #_sourceLocation
   ) {
     self._attachableValue = attachableValue
-    self.preferredName = preferredName ?? Self.defaultPreferredName
+    self._preferredName = preferredName
     self.metadata = metadata
     self.sourceLocation = sourceLocation
   }
@@ -118,7 +123,7 @@ extension Attachment where AttachableValue: ~Copyable {
     sourceLocation: SourceLocation = #_sourceLocation
   ) where AttachableValue.AttachmentMetadata == M? {
     self._attachableValue = attachableValue
-    self.preferredName = preferredName ?? Self.defaultPreferredName
+    self._preferredName = preferredName
     self.metadata = nil
     self.sourceLocation = sourceLocation
   }
@@ -136,7 +141,7 @@ extension Attachment where AttachableValue == AnyAttachable {
       _attachableValue: AnyAttachable(attachableValue: attachment.attachableValue),
       metadata: attachment.metadata,
       fileSystemPath: attachment.fileSystemPath,
-      preferredName: attachment.preferredName,
+      _preferredName: attachment._preferredName,
       sourceLocation: attachment.sourceLocation
     )
   }
@@ -187,9 +192,9 @@ public struct AnyAttachable: AttachableContainer, Copyable, Sendable {
 
       let temporaryAttachment = Attachment<T>(
         _attachableValue: attachableValue,
-        metadata: attachment.metadata as! T.AttachmentMetadata,
+        metadata: metadata,
         fileSystemPath: attachment.fileSystemPath,
-        preferredName: attachment.preferredName,
+        _preferredName: attachment._preferredName,
         sourceLocation: attachment.sourceLocation
       )
       return try temporaryAttachment.withUnsafeBufferPointer(body)
@@ -290,7 +295,7 @@ extension Attachment where AttachableValue: ~Copyable {
 #else
         let metadata: Never? = nil
 #endif
-        return Attachment<AnyAttachable>(_attachableValue: attachableContainer, metadata: metadata, fileSystemPath: fileSystemPath, preferredName: preferredName, sourceLocation: sourceLocation)
+        return Attachment<AnyAttachable>(_attachableValue: attachableContainer, metadata: metadata, fileSystemPath: fileSystemPath, _preferredName: _preferredName, sourceLocation: sourceLocation)
       }
       Event.post(.valueAttached(attachmentCopy))
     } catch {
@@ -383,7 +388,7 @@ extension Attachment where AttachableValue: ~Copyable {
   borrowing func write(toFileInDirectoryAtPath directoryPath: String, usingPreferredName: Bool = true, appending suffix: @autoclosure () -> String) throws -> String {
     let result: String
 
-    let preferredName = usingPreferredName ? preferredName : Self.defaultPreferredName
+    let preferredName = try usingPreferredName ? preferredName : Self.defaultPreferredName
 
     var file: FileHandle?
     do {
