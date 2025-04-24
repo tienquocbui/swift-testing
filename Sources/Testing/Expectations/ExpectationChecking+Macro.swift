@@ -612,9 +612,8 @@ public func __checkClosureCall<R>(
 /// Check that an expression always exits (terminates the current process) with
 /// a given status.
 ///
-/// This overload is used for `await #expect(exitsWith:) { }` invocations. Note
-/// that the `body` argument is thin here because it cannot meaningfully capture
-/// state from the enclosing context.
+/// This overload is used for `await #expect(exitsWith:) { }` invocations that
+/// do not capture any state.
 ///
 /// - Warning: This function is used to implement the `#expect()` and
 ///   `#require()` macros. Do not call it directly.
@@ -622,7 +621,7 @@ public func __checkClosureCall<R>(
 public func __checkClosureCall(
   identifiedBy exitTestID: (UInt64, UInt64, UInt64, UInt64),
   exitsWith expectedExitCondition: ExitTest.Condition,
-  observing observedValues: [any PartialKeyPath<ExitTest.Result> & Sendable],
+  observing observedValues: [any PartialKeyPath<ExitTest.Result> & Sendable] = [],
   performing body: @convention(thin) () -> Void,
   sourceCode: @escaping @autoclosure @Sendable () -> [__ExpressionID: String],
   comments: @autoclosure () -> [Comment],
@@ -632,6 +631,40 @@ public func __checkClosureCall(
 ) async -> Result<ExitTest.Result?, any Error> {
   await callExitTest(
     identifiedBy: exitTestID,
+    encodingCapturedValues: [],
+    exitsWith: expectedExitCondition,
+    observing: observedValues,
+    sourceCode: sourceCode(),
+    comments: comments(),
+    isRequired: isRequired,
+    sourceLocation: sourceLocation
+  )
+}
+
+/// Check that an expression always exits (terminates the current process) with
+/// a given status.
+///
+/// This overload is used for `await #expect(exitsWith:) { }` invocations that
+/// capture some values with an explicit capture list.
+///
+/// - Warning: This function is used to implement the `#expect()` and
+///   `#require()` macros. Do not call it directly.
+@_spi(Experimental)
+public func __checkClosureCall<each T>(
+  identifiedBy exitTestID: (UInt64, UInt64, UInt64, UInt64),
+  encodingCapturedValues capturedValues: (repeat each T),
+  exitsWith expectedExitCondition: ExitTest.Condition,
+  observing observedValues: [any PartialKeyPath<ExitTest.Result> & Sendable] = [],
+  performing _: @convention(thin) () -> Void,
+  sourceCode: @escaping @autoclosure @Sendable () -> [__ExpressionID: String],
+  comments: @autoclosure () -> [Comment],
+  isRequired: Bool,
+  isolation: isolated (any Actor)? = #isolation,
+  sourceLocation: SourceLocation
+) async -> Result<ExitTest.Result?, any Error> where repeat each T: Codable & Sendable {
+  await callExitTest(
+    identifiedBy: exitTestID,
+    encodingCapturedValues: Array(repeat each capturedValues),
     exitsWith: expectedExitCondition,
     observing: observedValues,
     sourceCode: sourceCode(),

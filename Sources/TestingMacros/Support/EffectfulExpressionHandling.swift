@@ -10,6 +10,7 @@
 
 import SwiftSyntax
 import SwiftSyntaxBuilder
+import SwiftSyntaxMacros
 
 // MARK: - Finding effect keywords
 
@@ -27,6 +28,10 @@ private final class _EffectFinder: SyntaxAnyVisitor {
       effectKeywords.insert(.await)
     case .consumeExpr:
       effectKeywords.insert(.consume)
+    case .borrowExpr:
+      effectKeywords.insert(.borrow)
+    case .unsafeExpr:
+      effectKeywords.insert(.unsafe)
     case .closureExpr, .functionDecl:
       // Do not delve into closures or function declarations.
       return .skipChildren
@@ -49,6 +54,7 @@ private final class _EffectFinder: SyntaxAnyVisitor {
 ///
 /// - Parameters:
 ///   - node: The node to inspect.
+///   - context: The macro context in which the expression is being parsed.
 ///
 /// - Returns: A set of effectful keywords such as `await` that are present in
 ///   `node`.
@@ -56,7 +62,8 @@ private final class _EffectFinder: SyntaxAnyVisitor {
 /// This function does not descend into function declarations or closure
 /// expressions because they represent distinct lexical contexts and their
 /// effects are uninteresting in the context of `node` unless they are called.
-func findEffectKeywords(in node: some SyntaxProtocol) -> Set<Keyword> {
+func findEffectKeywords(in node: some SyntaxProtocol, context: some MacroExpansionContext) -> Set<Keyword> {
+  // TODO: gather any effects from the lexical context once swift-syntax-#3037 and related PRs land
   let effectFinder = _EffectFinder(viewMode: .sourceAccurate)
   effectFinder.walk(node)
   return effectFinder.effectKeywords
@@ -100,10 +107,17 @@ private func _makeCallToEffectfulThunk(_ thunkName: TokenSyntax, passing expr: s
 ///   adds the keywords in `effectfulKeywords` to `expr`.
 func applyEffectfulKeywords(_ effectfulKeywords: Set<Keyword>, to expr: some ExprSyntaxProtocol) -> ExprSyntax {
   let originalExpr = expr
-  var expr = ExprSyntax(expr)
+  var expr = ExprSyntax(expr.trimmed)
 
   let needAwait = effectfulKeywords.contains(.await) && !expr.is(AwaitExprSyntax.self)
   let needTry = effectfulKeywords.contains(.try) && !expr.is(TryExprSyntax.self)
+
+  // The 'unsafe' keyword was introduced in 6.2 as part of SE-0458. Older
+  // toolchains are not aware of it, so avoid emitting expressions involving
+  // that keyword when the macro has been built using an older toolchain.
+#if compiler(>=6.2)
+  let needUnsafe = effectfulKeywords.contains(.unsafe) && !expr.is(UnsafeExprSyntax.self)
+#endif
 
   // First, add thunk function calls.
   if needAwait {
@@ -112,10 +126,15 @@ func applyEffectfulKeywords(_ effectfulKeywords: Set<Keyword>, to expr: some Exp
   if needTry {
     expr = _makeCallToEffectfulThunk(.identifier("__requiringTry"), passing: expr)
   }
+#if compiler(>=6.2)
+  if needUnsafe {
+    expr = _makeCallToEffectfulThunk(.identifier("__requiringUnsafe"), passing: expr)
+  }
+#endif
 
   // Then add keyword expressions. (We do this separately so we end up writing
-  // `try await __r(__r(self))` instead of `try __r(await __r(self))` which
-  // is less accepted by the compiler.)
+  // `try await __r(__r(self))` instead of `try __r(await __r(self))` which is
+  // less accepted by the compiler.)
   if needAwait {
     expr = ExprSyntax(
       AwaitExprSyntax(
@@ -132,6 +151,16 @@ func applyEffectfulKeywords(_ effectfulKeywords: Set<Keyword>, to expr: some Exp
       )
     )
   }
+#if compiler(>=6.2)
+  if needUnsafe {
+    expr = ExprSyntax(
+      UnsafeExprSyntax(
+        unsafeKeyword: .keyword(.unsafe).with(\.trailingTrivia, .space),
+        expression: expr
+      )
+    )
+  }
+#endif
 
   expr.leadingTrivia = originalExpr.leadingTrivia
   expr.trailingTrivia = originalExpr.trailingTrivia
