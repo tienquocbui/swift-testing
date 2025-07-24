@@ -51,18 +51,27 @@ func entryPoint(passing args: __CommandLineArguments_v0?, eventHandler: Event.Ha
     }
     configuration.verbosity = args.verbosity
 
-#if !SWT_NO_FILE_IO
-    // Configure the event recorder to write events to stderr.
-    if configuration.verbosity > .min {
-      let eventRecorder = Event.ConsoleOutputRecorder(options: .for(.stderr)) { string in
+    if configuration.verbosity >= 0 {
+      var advancedOptions = Event.AdvancedConsoleOutputRecorder.Options()
+      advancedOptions.base = .for(FileHandle.stderr)
+      
+      advancedOptions.base.useANSIEscapeCodes = true
+      advancedOptions.base.ansiColorBitDepth = 24
+      #if os(macOS)
+      advancedOptions.base.useSFSymbols = true
+      #endif
+      
+      advancedOptions.useHierarchicalOutput = true
+      
+      let eventRecorder = Event.AdvancedConsoleOutputRecorder(options: advancedOptions) { string in
         try? FileHandle.stderr.write(string)
       }
-      configuration.eventHandler = { [oldEventHandler = configuration.eventHandler] event, context in
-        eventRecorder.record(event, in: context)
-        oldEventHandler(event, context)
+      
+      // Replace the event handler completely with our advanced recorder
+      configuration.eventHandler = { event, context in
+        eventRecorder.handle(event, in: context)
       }
     }
-#endif
 
     // If the caller specified an alternate event handler, hook it up too.
     if let eventHandler {
