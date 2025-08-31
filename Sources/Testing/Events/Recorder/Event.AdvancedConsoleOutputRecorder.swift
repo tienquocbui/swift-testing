@@ -75,6 +75,10 @@ extension Event {
       /// All issues recorded during the test execution.
       /// Includes failures, warnings, and other diagnostic information.
       var issues: [ABI.EncodedIssue<V>] = []
+      
+      /// Detailed messages for each issue, preserving the order and association.
+      /// Each inner array contains all messages for a single issue.
+      var issueMessages: [[ABI.EncodedMessage<V>]] = []
     }
     
     /// Represents a node in the test hierarchy tree.
@@ -207,8 +211,10 @@ extension Event.AdvancedConsoleOutputRecorder {
       }
     }
     
+    // Generate detailed messages using HumanReadableOutputRecorder
+    let messages = _humanReadableRecorder.record(event, in: eventContext)
+    
     // Convert Event to ABI.EncodedEvent for processing (if needed)
-    let messages: [Event.HumanReadableOutputRecorder.Message] = []
     if let encodedEvent = ABI.EncodedEvent<V>(encoding: event, in: eventContext, messages: messages) {
       _processABIEvent(encodedEvent)
     }
@@ -417,6 +423,7 @@ extension Event.AdvancedConsoleOutputRecorder {
            let issue = encodedEvent.issue {
           var testData = context.testData[testID] ?? _TestData()
           testData.issues.append(issue)
+          testData.issueMessages.append(encodedEvent.messages)
           context.testData[testID] = testData
         }
         
@@ -538,42 +545,63 @@ extension Event.AdvancedConsoleOutputRecorder {
     // Failed Test Details (only if there are failures)
     let failedTests = context.testData.filter { $0.value.result == .failed }
     if !failedTests.isEmpty {
-      output += "══════════════════════════════════════ FAILED TEST DETAILS ══════════════════════════════════════\n"
+      output += "══════════════════════════════════════ FAILED TEST DETAILS (\(failedTests.count)) ══════════════════════════════════════\n"
       output += "\n"
       
       // Iterate through all tests that recorded one or more failures
-      for (testID, testData) in failedTests {
+      for (testIndex, testEntry) in failedTests.enumerated() {
+        let (testID, testData) = testEntry
+        let testNumber = testIndex + 1
+        let totalFailedTests = failedTests.count
+        
         // Get the fully qualified test name by traversing up the hierarchy
         let fullyQualifiedName = _getFullyQualifiedTestNameWithFile(testID: testID, context: context)
         
         let failureIcon = _getStatusIcon(for: .failed)
         output += "\(failureIcon) \(fullyQualifiedName)\n"
         
-        // Show detailed issue information with proper indentation
+        // Show detailed issue information with enhanced formatting
         if !testData.issues.isEmpty {
-          for issue in testData.issues {
-            // Get detailed error description
-            if let error = issue._error {
-              let errorDescription = "\(error)"
-              
-              if !errorDescription.isEmpty && errorDescription != "Test failure" {
-                output += "  Expectation failed:\n"
-                
-                // Split multi-line error descriptions and indent each line
-                let errorLines = errorDescription.split(separator: "\n", omittingEmptySubsequences: false)
-                for line in errorLines {
-                  output += "    \(line)\n"
-                }
+          for (issueIndex, issue) in testData.issues.enumerated() {
+            // 1. Error Message - Get detailed error description
+            let issueDescription = _formatDetailedIssueDescription(issue, issueIndex: issueIndex, testData: testData)
+            
+            if !issueDescription.isEmpty {
+              let errorLines = issueDescription.split(separator: "\n", omittingEmptySubsequences: false)
+              for line in errorLines {
+                output += "  \(line)\n"
               }
             }
             
-            // Add source location
+            // 2. Location and Source Code Context
             if let sourceLocation = issue.sourceLocation {
-              output += "  at \(sourceLocation.fileName):\(sourceLocation.line)\n"
+              output += "\n"
+              output += "  Location: \(sourceLocation.fileName):\(sourceLocation.line):\(sourceLocation.column)\n"
+              
+              // 3. Source Code Context (2-3 lines before/after)
+              let codeContext = _getSourceCodeContext(for: sourceLocation)
+              if !codeContext.isEmpty {
+                output += "\n"
+                output += codeContext
+              }
             }
             
+            // 4. Statistics - Error counter in lower right
+            let errorCounter = "[\(testNumber)/\(totalFailedTests)]"
+            let paddingLength = max(0, 100 - errorCounter.count)
             output += "\n"
+            output += "\(String(repeating: " ", count: paddingLength))\(errorCounter)\n"
+            
+            // Add spacing between issues (except for the last one)
+            if issueIndex < testData.issues.count - 1 {
+              output += "\n"
+            }
           }
+        }
+        
+        // Add spacing between tests (except for the last one)
+        if testIndex < failedTests.count - 1 {
+          output += "\n"
         }
       }
     }
@@ -680,27 +708,150 @@ extension Event.AdvancedConsoleOutputRecorder {
       let paddedTestLine = _padWithDuration(testLine, duration: duration)
       output += "\(prefix)\(treePrefix)\(paddedTestLine)\n"
       
-      // Render issues for failed tests
+      // Show concise issue summary for quick overview
       if let issues = context.testData[node.testID]?.issues, !issues.isEmpty {
         let issuePrefix = prefix + (isLast ? "   " : "\(_treeVertical)  ")
         for (issueIndex, issue) in issues.enumerated() {
           let isLastIssue = issueIndex == issues.count - 1
           let issueTreePrefix = isLastIssue ? _treeLastBranch : _treeBranch
           let issueIcon = _getStatusIcon(for: .failed)
-          let issueDescription = issue._error?.description ?? "Test failure"
           
-          output += "\(issuePrefix)\(issueTreePrefix)\(issueIcon) \(issueDescription)\n"
+          // Get concise issue description (first line only)
+          let fullDescription = _formatDetailedIssueDescription(issue, issueIndex: issueIndex, testData: context.testData[node.testID]!)
+          let conciseDescription = fullDescription.split(separator: "\n").first.map(String.init) ?? "Issue recorded"
           
-          // Add source location
+          output += "\(issuePrefix)\(issueTreePrefix)\(issueIcon) \(conciseDescription)\n"
+          
+          // Add concise source location
           if let sourceLocation = issue.sourceLocation {
             let locationPrefix = issuePrefix + (isLastIssue ? "   " : "\(_treeVertical)  ")
-            output += "\(locationPrefix)At \(sourceLocation.fileName):\(sourceLocation.line):\(sourceLocation.column)\n"
+            output += "\(locationPrefix)at \(sourceLocation.fileName):\(sourceLocation.line)\n"
           }
         }
       }
     }
     
     return output
+  }
+  
+  /// Format a detailed description of an issue for the Failed Test Details section.
+  ///
+  /// - Parameters:
+  ///   - issue: The encoded issue to format.
+  ///   - issueIndex: The index of the issue in the testData.issues array.
+  ///   - testData: The test data containing the stored messages.
+  /// - Returns: A detailed description of what failed.
+  private func _formatDetailedIssueDescription(_ issue: ABI.EncodedIssue<V>, issueIndex: Int, testData: _TestData) -> String {
+    // Get the corresponding messages for this issue
+    guard issueIndex < testData.issueMessages.count else {
+      // Fallback to error description if available
+      if let error = issue._error {
+        return error.description
+      }
+      return "Issue recorded"
+    }
+    
+    let messages = testData.issueMessages[issueIndex]
+    
+    // Look for detailed messages (difference, details) that contain the actual failure information
+    var detailedMessages: [String] = []
+    
+    for message in messages {
+      switch message.symbol {
+      case .difference, .details:
+        // These contain the detailed expectation failure information
+        detailedMessages.append(message.text)
+      case .fail:
+        // Primary failure message - use if no detailed messages available
+        if detailedMessages.isEmpty {
+          detailedMessages.append(message.text)
+        }
+      default:
+        break
+      }
+    }
+    
+    if !detailedMessages.isEmpty {
+      return detailedMessages.joined(separator: "\n")
+    }
+    
+    // Final fallback
+    if let error = issue._error {
+      return error.description
+    }
+    return "Issue recorded"
+  }
+  
+  /// Get source code context around a failing line.
+  ///
+  /// - Parameters:
+  ///   - sourceLocation: The source location of the failure.
+  /// - Returns: Formatted source code context with line numbers and failure indicator.
+  private func _getSourceCodeContext(for sourceLocation: SourceLocation) -> String {
+    // Try to read the source file
+    guard let fileContent = _readSourceFile(at: sourceLocation.fileName) else {
+      return ""
+    }
+    
+    let lines = fileContent.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    let failingLineNumber = sourceLocation.line
+    let contextLines = 2 // Show 2 lines before and after
+    
+    // Calculate the range of lines to show
+    let startLine = max(1, failingLineNumber - contextLines)
+    let endLine = min(lines.count, failingLineNumber + contextLines)
+    
+    var output = ""
+    
+    // Calculate the width needed for line numbers (right-aligned)
+    let maxLineNumber = endLine
+    let lineNumberWidth = String(maxLineNumber).count
+    
+    for lineNumber in startLine...endLine {
+      let lineIndex = lineNumber - 1 // Convert to 0-based index
+      guard lineIndex < lines.count else { continue }
+      
+      let lineContent = lines[lineIndex]
+      let lineNumberString = String(lineNumber)
+      let paddingNeeded = lineNumberWidth - lineNumberString.count
+      let paddedLineNumber = String(repeating: " ", count: paddingNeeded) + lineNumberString
+      
+      // Add failure indicator for the exact failing line
+      let indicator = (lineNumber == failingLineNumber) ? ">" : " "
+      
+      output += "  \(paddedLineNumber) \(indicator) | \(lineContent)\n"
+    }
+    
+    return output
+  }
+  
+  /// Read the contents of a source file.
+  ///
+  /// - Parameters:
+  ///   - fileName: The name of the file to read.
+  /// - Returns: The file contents as a string, or nil if the file cannot be read.
+  private func _readSourceFile(at fileName: String) -> String? {
+    // Handle relative paths by checking common locations
+    let possiblePaths = [
+      fileName, // Try as-is first
+      "Tests/TestingTests/\(fileName)", // Common test location
+      "Sources/Testing/\(fileName)", // Main source location
+      "\(fileName)" // Current directory
+    ]
+    
+    for path in possiblePaths {
+      do {
+        let fileHandle = try FileHandle(forReadingAtPath: path)
+        let data = try fileHandle.readToEnd()
+        let content = String(decoding: data, as: UTF8.self)
+        return content
+      } catch {
+        // Continue to next path
+        continue
+      }
+    }
+    
+    return nil
   }
   
   /// Get the status icon for a test result.
