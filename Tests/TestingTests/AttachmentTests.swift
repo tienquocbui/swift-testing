@@ -38,7 +38,7 @@ import WinSDK
 @testable @_spi(Experimental) import _Testing_WinSDK
 #endif
 
-@Suite("Attachment Tests", .disabled())
+@Suite("Attachment Tests")
 struct AttachmentTests {
   @Test func saveValue() {
     let attachableValue = MyAttachable(string: "<!doctype html>")
