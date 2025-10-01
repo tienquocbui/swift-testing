@@ -21,8 +21,10 @@ add_library(Testing
   ABI/Encoded/ABI.EncodedIssue.swift
   ABI/Encoded/ABI.EncodedMessage.swift
   ABI/Encoded/ABI.EncodedTest.swift
+  Attachments/Images/_AttachableAsImage.swift
   Attachments/Images/_AttachableImageWrapper.swift
   Attachments/Images/AttachableImageFormat.swift
+  Attachments/Images/Attachment+_AttachableAsImage.swift
   Attachments/Images/ImageAttachmentError.swift
   Attachments/Attachable.swift
   Attachments/AttachableWrapper.swift
@@ -124,7 +126,8 @@ if(NOT APPLE)
   endif()
   target_link_libraries(Testing PUBLIC
     Foundation)
-  if (CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
+  if (CMAKE_SYSTEM_NAME STREQUAL "FreeBSD" OR
+      CMAKE_SYSTEM_NAME STREQUAL "OpenBSD")
     target_link_libraries(Testing PUBLIC execinfo)
   endif()
 endif()
