@@ -323,8 +323,8 @@ extension Event.ConsoleOutputRecorder {
   /// - Returns: Whether any output was produced and written to this instance's
   ///   destination.
   @discardableResult public func record(_ event: borrowing Event, in context: borrowing Event.Context) -> Bool {
-    // Track failures for the summary
-    if case let .issueRecorded(issue) = event.kind, issue.severity == .error || issue.severity == .unconditional {
+    // Track failures for the summary (only errors, not warnings)
+    if case let .issueRecorded(issue) = event.kind, issue.severity == .error {
       if let test = context.test {
         let failureMessage = issue.comments.first?.rawValue ?? "Expectation failed"
         _failedTests.withLock { failedTests in
