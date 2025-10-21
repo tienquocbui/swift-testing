@@ -16,6 +16,21 @@ extension Event {
   /// subject to change. For machine-readable output, use ``JUnitXMLRecorder``.
   @_spi(ForToolsIntegrationOnly)
   public struct ConsoleOutputRecorder: Sendable/*, ~Copyable*/ {
+    /// A type describing a failed test for the failure summary.
+    private struct FailedTest: Sendable {
+      /// The test that failed.
+      var testName: String
+      
+      /// The test ID for navigation.
+      var testID: Test.ID
+      
+      /// Failure messages for this test.
+      var messages: [String]
+      
+      /// The source location of the first failure, if available.
+      var sourceLocation: SourceLocation?
+    }
+    
     /// A type describing options to use when writing events to a stream.
     public struct Options: Sendable {
       /// Use [ANSI escape codes](https://en.wikipedia.org/wiki/ANSI_escape_code)
@@ -102,6 +117,9 @@ extension Event {
 
     /// The underlying human-readable recorder.
     private var _humanReadableOutputRecorder = HumanReadableOutputRecorder()
+    
+    /// Storage for failed tests to display in the summary.
+    private var _failedTests = Locked(rawValue: [FailedTest]())
 
     /// Initialize a new event recorder.
     ///
@@ -305,6 +323,32 @@ extension Event.ConsoleOutputRecorder {
   /// - Returns: Whether any output was produced and written to this instance's
   ///   destination.
   @discardableResult public func record(_ event: borrowing Event, in context: borrowing Event.Context) -> Bool {
+    // Track failures for the summary
+    if case let .issueRecorded(issue) = event.kind, issue.severity == .error || issue.severity == .unconditional {
+      if let test = context.test {
+        let failureMessage = issue.comments.first?.rawValue ?? "Expectation failed"
+        _failedTests.withLock { failedTests in
+          if let index = failedTests.firstIndex(where: { $0.testID == test.id }) {
+            // Append to existing test
+            failedTests[index].messages.append(failureMessage)
+          } else {
+            // Add new failed test
+            failedTests.append(FailedTest(
+              testName: test.name,
+              testID: test.id,
+              messages: [failureMessage],
+              sourceLocation: issue.sourceLocation
+            ))
+          }
+        }
+      }
+    }
+    
+    // Print failure summary when run ends
+    if case .runEnded = event.kind {
+      printFailureSummary()
+    }
+    
     let messages = _humanReadableOutputRecorder.record(event, in: context)
 
     // Padding to use in place of a symbol for messages that don't have one.
@@ -343,6 +387,41 @@ extension Event.ConsoleOutputRecorder {
     return !messages.isEmpty
   }
 
+
+  /// Print a summary of all failures at the end of the test run.
+  ///
+  /// This function prints a simple, text-based summary of all failures that
+  /// occurred during the test run. The output is designed to be consistent with
+  /// the existing simple console output style.
+  private func printFailureSummary() {
+    let failures = _failedTests.rawValue
+    guard !failures.isEmpty else {
+      return
+    }
+    
+    var summary = ""
+    
+    // Simple header with failure count
+    let failureWord = failures.count == 1 ? "failure" : "failures"
+    summary += "Test run had \(failures.count) \(failureWord):\n"
+    
+    // List each failed test
+    for (index, failure) in failures.enumerated() {
+      summary += "\(index + 1). \(failure.testName)\n"
+      
+      // Show each failure message for this test
+      for message in failure.messages {
+        summary += "   \(message)\n"
+      }
+      
+      // Show source location if available
+      if let location = failure.sourceLocation {
+        summary += "   at \(location.fileID):\(location.line)\n"
+      }
+    }
+    
+    write(summary)
+  }
 
   /// Get a message warning the user of some condition in the library that may
   /// affect test results.
