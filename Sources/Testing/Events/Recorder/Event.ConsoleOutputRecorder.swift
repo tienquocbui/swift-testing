@@ -326,7 +326,17 @@ extension Event.ConsoleOutputRecorder {
     // Track failures for the summary (only errors, not warnings)
     if case let .issueRecorded(issue) = event.kind, issue.severity == .error {
       if let test = context.test {
-        let failureMessage = issue.comments.first?.rawValue ?? "Expectation failed"
+        // Extract detailed failure message
+        var failureMessage: String
+        if case let .expectationFailed(expectation) = issue.kind {
+          // Use the expression description for detailed error info
+          failureMessage = String(describing: expectation.evaluatedExpression)
+        } else if let comment = issue.comments.first {
+          failureMessage = comment.rawValue
+        } else {
+          failureMessage = "Test failed"
+        }
+        
         _failedTests.withLock { failedTests in
           if let index = failedTests.firstIndex(where: { $0.testID == test.id }) {
             // Append to existing test
@@ -401,13 +411,19 @@ extension Event.ConsoleOutputRecorder {
     
     var summary = ""
     
-    // Simple header with failure count
+    // Add blank line before summary for visual separation
+    summary += "\n"
+    
+    // Header with failure count
     let failureWord = failures.count == 1 ? "failure" : "failures"
     summary += "Test run had \(failures.count) \(failureWord):\n"
     
+    // Get the failure symbol
+    let failSymbol = Event.Symbol.fail.stringValue(options: options)
+    
     // List each failed test
     for (index, failure) in failures.enumerated() {
-      summary += "\(index + 1). \(failure.testName)\n"
+      summary += "\(failSymbol) [\(index + 1)/\(failures.count)] \(failure.testName)\n"
       
       // Show each failure message for this test
       for message in failure.messages {
