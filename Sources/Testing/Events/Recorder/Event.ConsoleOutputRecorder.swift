@@ -306,6 +306,14 @@ extension Event.ConsoleOutputRecorder {
   ///   destination.
   @discardableResult public func record(_ event: borrowing Event, in context: borrowing Event.Context) -> Bool {
     let messages = _humanReadableOutputRecorder.record(event, in: context)
+    
+    // Print failure summary when run ends
+    if case .runEnded = event.kind {
+      let summary = _humanReadableOutputRecorder.generateFailureSummary(options: options)
+      if !summary.isEmpty {
+        write(summary)
+      }
+    }
 
     // Padding to use in place of a symbol for messages that don't have one.
     var padding = " "
