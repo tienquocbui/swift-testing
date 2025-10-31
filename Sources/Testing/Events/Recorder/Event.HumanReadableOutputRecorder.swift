@@ -707,15 +707,27 @@ extension Event.HumanReadableOutputRecorder {
       
       // Recursively traverse children
       for (key, childGraph) in graph.children {
-        let pathComponent: String
+        let pathComponent: String?
         switch key {
         case let .string(s):
-          pathComponent = s
+          let parts = s.split(separator: ":")
+          if s.hasSuffix(".swift:") || (parts.count >= 2 && parts[0].hasSuffix(".swift")) {
+            pathComponent = nil
+          } else {
+            pathComponent = s
+          }
         case let .testCaseID(id):
-          pathComponent = String(describing: id)
+          // Only include parameterized test case IDs in path, skip non-parameterized ones
+          if let argumentIDs = id.argumentIDs, let discriminator = id.discriminator {
+            pathComponent = "arguments: \(argumentIDs), discriminator: \(discriminator)"
+          } else {
+            // Non-parameterized test - don't add to path
+            pathComponent = nil
+          }
         }
         
-        traverse(graph: childGraph, path: path + [pathComponent])
+        let newPath = pathComponent.map { path + [$0] } ?? path
+        traverse(graph: childGraph, path: newPath)
       }
     }
     
