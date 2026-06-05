@@ -129,6 +129,22 @@ private let _ansiEscapeCodePrefix = "\u{001B}["
 private let _resetANSIEscapeCode = "\(_ansiEscapeCodePrefix)0m"
 
 extension Event.Symbol {
+  /// Get the string value to use for a message with no associated symbol.
+  ///
+  /// - Parameters:
+  ///   - options: Options to use when writing the symbol.
+  ///
+  /// - Returns: A string representation of "no symbol" appropriate for writing
+  ///   to a stream.
+  fileprivate static func placeholderStringValue(options: Event.ConsoleOutputRecorder.Options) -> String {
+#if os(macOS) || (os(iOS) && targetEnvironment(macCatalyst))
+    if options.useSFSymbols {
+      return "  "
+    }
+#endif
+    return " "
+  }
+
   /// Get the string value for this symbol with the given write options.
   ///
   /// - Parameters:
@@ -162,19 +178,17 @@ extension Event.Symbol {
           return "\(_ansiEscapeCodePrefix)90m\(symbolCharacter)\(_resetANSIEscapeCode)"
         }
         return "\(_ansiEscapeCodePrefix)92m\(symbolCharacter)\(_resetANSIEscapeCode)"
-      case .passWithWarnings:
+      case .warning:
         return "\(_ansiEscapeCodePrefix)93m\(symbolCharacter)\(_resetANSIEscapeCode)"
       case .fail:
         return "\(_ansiEscapeCodePrefix)91m\(symbolCharacter)\(_resetANSIEscapeCode)"
-      case .warning:
-        return "\(_ansiEscapeCodePrefix)93m\(symbolCharacter)\(_resetANSIEscapeCode)"
       case .attachment:
         return "\(_ansiEscapeCodePrefix)94m\(symbolCharacter)\(_resetANSIEscapeCode)"
       case .details:
         return symbolCharacter
       }
     }
-    return "\(symbolCharacter)"
+    return symbolCharacter
   }
 }
 
@@ -305,18 +319,12 @@ extension Event.ConsoleOutputRecorder {
   /// - Returns: Whether any output was produced and written to this instance's
   ///   destination.
   @discardableResult public func record(_ event: borrowing Event, in context: borrowing Event.Context) -> Bool {
+    let symbolPlaceholder = Event.Symbol.placeholderStringValue(options: options)
+
     let messages = _humanReadableOutputRecorder.record(event, in: context)
-
-    // Padding to use in place of a symbol for messages that don't have one.
-    var padding = " "
-#if os(macOS) || (os(iOS) && targetEnvironment(macCatalyst))
-    if options.useSFSymbols {
-      padding = "  "
-    }
-#endif
-
     let lines = messages.lazy.map { [test = context.test] message in
-      let symbol = message.symbol?.stringValue(options: options) ?? padding
+      let symbol = message.symbol?.stringValue(options: options) ?? symbolPlaceholder
+      let indentation = String(repeating: "  ", count: message.indentation)
 
       if case .details = message.symbol {
         // Special-case the detail symbol to apply grey to the entire line of
@@ -325,21 +333,35 @@ extension Event.ConsoleOutputRecorder {
         // to the indentation provided by the symbol.
         var lines = message.stringValue.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
         lines = CollectionOfOne(lines[0]) + lines.dropFirst().map { line in
-          "\(padding) \(line)"
+          "\(indentation)\(symbolPlaceholder) \(line)"
         }
         let stringValue = lines.joined(separator: "\n")
         if options.useANSIEscapeCodes, options.ansiColorBitDepth > 1 {
-          return "\(_ansiEscapeCodePrefix)90m\(symbol) \(stringValue)\(_resetANSIEscapeCode)\n"
+          return "\(_ansiEscapeCodePrefix)90m\(symbol) \(indentation)\(stringValue)\(_resetANSIEscapeCode)\n"
         } else {
-          return "\(symbol) \(stringValue)\n"
+          return "\(symbol) \(indentation)\(stringValue)\n"
         }
       } else {
         let colorDots = test.map { self.colorDots(for: $0.tags) } ?? ""
-        return "\(symbol) \(colorDots)\(message.stringValue)\n"
+        return "\(symbol) \(indentation)\(colorDots)\(message.stringValue)\n"
       }
     }
 
     write(lines.joined())
+
+    // Print failure summary when run ends, unless an environment variable is
+    // set to explicitly disable it or verbosity is set to the lowest value. The
+    // summary is printed after the main output so it appears at the very end of
+    // the console output.
+    if case .runEnded = event.kind,
+       Environment.flag(named: "SWT_FAILURE_SUMMARY_ENABLED") != false,
+       context.configuration?.verbosity != .min {
+      if let summary = _humanReadableOutputRecorder.generateFailureSummary(options: options) {
+        // Add blank line before summary for visual separation
+        write("\n\(summary)")
+      }
+    }
+
     return !messages.isEmpty
   }
 
